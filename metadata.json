@@ -1,0 +1,6 @@
+{
+  "name": "Smart Finance Dashboard",
+  "description": "Mobile-first financial tracker with natural language smart input and realtime cash flow insights.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
