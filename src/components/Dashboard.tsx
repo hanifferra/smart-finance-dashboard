@@ -124,7 +124,7 @@ export function Dashboard({ transactions, onNavigateToHistory, onAddTransaction,
         <div className="bg-violet-100 p-6 rounded-[2rem] shadow-sm border-2 border-violet-200 relative overflow-hidden">
           <div className="flex items-center space-x-2 mb-4 relative z-10">
             <Sparkles size={20} className="text-violet-500" />
-            <h2 className="font-bold font-display text-violet-600 text-lg">Input Gemes ✨</h2>
+            <h2 className="font-bold font-display text-violet-600 text-lg">Catatan pintar di sini ya ✨</h2>
           </div>
           <form onSubmit={handleSmartInputSubmit} className="relative z-10">
             <input 
@@ -167,7 +167,7 @@ export function Dashboard({ transactions, onNavigateToHistory, onAddTransaction,
                     ))}
                   </Pie>
                   <Tooltip 
-                    formatter={(value: number) => formatCurrency(value)}
+                    formatter={(value: number | string | any) => formatCurrency(value)}
                     contentStyle={{ borderRadius: '1rem', border: 'none', boxShadow: '0 10px 25px -5px rgb(251 113 133 / 0.1), 0 8px 10px -6px rgb(251 113 133 / 0.1)', fontWeight: 'bold' }}
                   />
                 </PieChart>
