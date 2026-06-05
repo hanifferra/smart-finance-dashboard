@@ -40,7 +40,7 @@ export async function createSpreadsheet(): Promise<string> {
 
   const data = await response.json();
   const spreadsheetId = data.spreadsheetId;
-  
+
   if (spreadsheetId) {
     setSpreadsheetId(spreadsheetId);
     await initializeSheetHeaders(spreadsheetId);
@@ -65,9 +65,12 @@ async function initializeSheetHeaders(spreadsheetId: string): Promise<void> {
 // ==========================================
 
 // Fungsi mengambil data saat aplikasi pertama kali dimuat
-export async function fetchTransactions(): Promise<Transaction[]> {
+// Tambahkan parameter 'providedSheetId' di dalam kurung
+export async function fetchTransactions(providedSheetId?: string): Promise<Transaction[]> {
   try {
-    const spreadsheetId = getSpreadsheetId();
+    // Gunakan ID yang dikirim dari App.tsx, ATAU ambil dari getSpreadsheetId(), ATAU dari localStorage
+    const spreadsheetId = providedSheetId || getSpreadsheetId() || localStorage.getItem('userSheetId');
+
     if (!spreadsheetId) return [];
 
     const headers = await getAuthHeaders();
@@ -95,12 +98,12 @@ export async function fetchTransactions(): Promise<Transaction[]> {
 }
 
 // Fungsi dummy untuk mencegah App.tsx error saat import
-export async function addTransactionToSheet(transaction: Transaction) {
+export async function addTransactionToSheet(sheetId: string, tx: Omit<Transaction, 'id'>) {
   // Jika Anda memakai syncTransactions (Auto-Save), fungsi ini bisa dibiarkan kosong
   console.log("Gunakan syncTransactions untuk auto-save data baru.");
 }
 
-export async function updateTransactionInSheet(transaction: Transaction) {
+export async function updateTransactionInSheet(sheetId: string, tx: Omit<Transaction, 'id'>){
   console.log("Gunakan syncTransactions untuk auto-save data yang diubah.");
 }
 
