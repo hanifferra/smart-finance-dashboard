@@ -1,78 +1,68 @@
 import { SmartInputResult, Category, TransactionType } from '@/src/types';
-import { subDays } from 'date-fns';
+import { GoogleGenAI, Type } from '@google/genai';
 
-export function parseSmartInput(input: string): SmartInputResult {
-  const lowerInput = input.toLowerCase();
+// Inisialisasi Gemini Client
+const ai = new GoogleGenAI({ apiKey: import.meta.env.VITE_GEMINI_API_KEY });
 
-  // 1. Determine Type
-  let type: TransactionType = 'expense'; // Default to expense
-  const incomeKeywords = ['gaji', 'terima', 'dapat', 'bonus', '+', 'masuk'];
-  const expenseKeywords = ['beli', 'bayar', 'keluar', '-', 'kasih', 'makan'];
-  
-  if (incomeKeywords.some(kw => lowerInput.includes(kw))) {
-    type = 'income';
-  } else if (expenseKeywords.some(kw => lowerInput.includes(kw))) {
-    type = 'expense';
-  }
+/**
+ * Mengubah fungsi parseSmartInput lama menjadi Async untuk mendukung Gemini API.
+ * Pastikan Anda menambahkan kata kunci 'await' saat memanggil fungsi ini di komponen!
+ */
+export async function parseSmartInput(input: string): Promise<SmartInputResult> {
+  try {
+    const response = await ai.models.generateContent({
+      model: 'gemini-2.5-flash',
+      contents: `Ekstrak data keuangan dari teks: "${input}"`,
+      config: {
+        systemInstruction: `
+          Kamu adalah AI kasir pintar khusus Indonesia. Tugasmu adalah mengekstrak teks input mentah menjadi data terstruktur.
+          
+          Aturan ekstraksi:
+          1. Tentukan 'type': 'income' jika teks mengindikasikan uang masuk/pemasukan, atau 'expense' jika uang keluar/pengeluaran.
+          2. Konversi angka gaul/singkatan Indonesia (misal: 50rb -> 50000, 2jt -> 2000000, ceban -> 10000, gocap -> 50000) menjadi angka integer murni.
+          3. Tentukan kategori singkat yang cocok (misal: Makanan, Transportasi, Gaji, Belanja, Hiburan).
+          4. Ambil deskripsi nama barang/tempat/kegiatan secara ringkas.
+        `,
+        responseMimeType: 'application/json',
+        responseSchema: {
+          type: Type.OBJECT,
+          properties: {
+            type: { type: Type.STRING, enum: ['income', 'expense'] },
+            amount: { type: Type.INTEGER },
+            category: { type: Type.STRING },
+            description: { type: Type.STRING },
+          },
+          required: ['type', 'amount', 'category', 'description'],
+        },
+      },
+    });
 
-  // 2. Parse Amount
-  let amount: number | null = null;
-  // Match absolute numbers or numbers with suffixes like rb, k, juta
-  const amountRegex = /(?:rp\s*)?(?:\d{1,3}(?:\.\d{3})*|\d+)(?:\s*(rb|ribu|k|jt|juta))?/g;
-  const matches = lowerInput.match(amountRegex);
-  
-  if (matches && matches.length > 0) {
-    // Take the first match
-    let matchStr = matches[0].replace(/rp\s*/g, '');
-    let multiplier = 1;
-    
-    if (matchStr.includes('rb') || matchStr.includes('ribu') || matchStr.includes('k')) {
-      multiplier = 1000;
-      matchStr = matchStr.replace(/rb|ribu|k/g, '');
-    } else if (matchStr.includes('jt') || matchStr.includes('juta')) {
-      multiplier = 1000000;
-      matchStr = matchStr.replace(/jt|juta/g, '');
+    if (response.text) {
+      const data = JSON.parse(response.text);
+      
+      // Kembalikan objek yang sesuai dengan tipe SmartInputResult proyek Anda
+      return {
+        type: data.type as TransactionType,
+        amount: data.amount,
+        category: data.category as Category,
+        description: data.description,
+        // Jika SmartInputResult membutuhkan properti tambahan seperti date, Anda bisa menambahkannya di sini:
+        // date: new Date().toISOString()
+        date: new Date(),
+      };
     }
+
+    throw new Error('Respons Gemini kosong');
+  } catch (error) {
+    console.error('Gagal memproses teks dengan Gemini:', error);
     
-    // Clean formatting e.g. 50.000 -> 50000
-    const rawNumber = parseInt(matchStr.replace(/\./g, '').trim(), 10);
-    if (!isNaN(rawNumber)) {
-        amount = rawNumber * multiplier;
-    }
+    // Fallback jika API error agar aplikasi tidak crash
+    return {
+      type: 'expense' as TransactionType,
+      amount: 0,
+      category: 'Lainnya' as Category,
+      description: input,
+      date: new Date(),
+    };
   }
-
-  // 3. Determine Category
-  let category: Category = 'Lainnya'; // Default
-  if (type === 'income') {
-    if (lowerInput.includes('gaji')) category = 'Gaji';
-  } else {
-    const foodKw = ['makan', 'minum', 'kopi', 'nongkrong', 'kafe', 'padang', 'warteg'];
-    const transportKw = ['bensin', 'grab', 'gojek', 'kereta', 'tol', 'parkir', 'krl'];
-    const billsKw = ['listrik', 'token', 'air', 'internet', 'pulsa', 'kuota', 'tagihan', 'kos', 'pdam'];
-    const shopKw = ['belanja', 'supermarket', 'indomaret', 'baju', 'sepatu', 'shopee', 'tokopedia'];
-
-    if (foodKw.some(kw => lowerInput.includes(kw))) category = 'Makanan';
-    else if (transportKw.some(kw => lowerInput.includes(kw))) category = 'Transportasi';
-    else if (billsKw.some(kw => lowerInput.includes(kw))) category = 'Tagihan';
-    else if (shopKw.some(kw => lowerInput.includes(kw))) category = 'Belanja';
-  }
-
-  // 4. Determine Date
-  let date = new Date();
-  if (lowerInput.includes('kemarin')) {
-    date = subDays(date, 1);
-  } else if (lowerInput.includes('lusa')) {
-    date = subDays(date, 2);
-  }
-
-  // 5. Description is the original input
-  const description = input.trim();
-
-  return {
-    type,
-    amount,
-    category,
-    description,
-    date,
-  };
 }
