@@ -2,6 +2,9 @@
 import { initializeApp } from "firebase/app";
 import { getAuth, signInWithPopup, GoogleAuthProvider, onAuthStateChanged, User } from "firebase/auth";
 
+// ==========================================
+// 1. INISIALISASI FIREBASE
+// ==========================================
 const firebaseConfig = {
   apiKey: import.meta.env.VITE_FIREBASE_API_KEY,
   authDomain: import.meta.env.VITE_FIREBASE_AUTH_DOMAIN,
@@ -14,28 +17,49 @@ const firebaseConfig = {
 const app = initializeApp(firebaseConfig);
 export const auth = getAuth(app);
 
-// ... KODE LAMA KAMU (fungsi getAccessToken, dll) BIARKAN TETAP DI SINI ...
-
+// ==========================================
+// 2. KONFIGURASI GOOGLE PROVIDER & SCOPES
+// ==========================================
 const provider = new GoogleAuthProvider();
 provider.addScope('https://www.googleapis.com/auth/spreadsheets');
+provider.addScope('https://www.googleapis.com/auth/drive.file'); // Wajib untuk bikin file baru
 
 let isSigningIn = false;
-let cachedAccessToken: string | null = null;
 
+// ==========================================
+// 3. MANAJEMEN GOOGLE ACCESS TOKEN
+// ==========================================
+export const setAccessToken = (token: string) => {
+  sessionStorage.setItem('google_access_token', token);
+};
+
+export const getAccessToken = (): string | null => {
+  return sessionStorage.getItem('google_access_token');
+};
+
+export const clearAccessToken = () => {
+  sessionStorage.removeItem('google_access_token');
+};
+
+// ==========================================
+// 4. FUNGSI AUTHENTICATION
+// ==========================================
 export const initAuth = (
   onAuthSuccess?: (user: User, token: string) => void,
   onAuthFailure?: () => void
 ) => {
   return onAuthStateChanged(auth, async (user: User | null) => {
+    const token = getAccessToken();
+    
     if (user) {
-      if (cachedAccessToken) {
-        if (onAuthSuccess) onAuthSuccess(user, cachedAccessToken);
+      if (token) {
+        if (onAuthSuccess) onAuthSuccess(user, token);
       } else if (!isSigningIn) {
-        cachedAccessToken = null;
+        clearAccessToken();
         if (onAuthFailure) onAuthFailure();
       }
     } else {
-      cachedAccessToken = null;
+      clearAccessToken();
       if (onAuthFailure) onAuthFailure();
     }
   });
@@ -46,12 +70,16 @@ export const googleSignIn = async (): Promise<{ user: User; accessToken: string 
     isSigningIn = true;
     const result = await signInWithPopup(auth, provider);
     const credential = GoogleAuthProvider.credentialFromResult(result);
+    
     if (!credential?.accessToken) {
       throw new Error('Failed to get access token from Firebase Auth');
     }
 
-    cachedAccessToken = credential.accessToken;
-    return { user: result.user, accessToken: cachedAccessToken };
+    // Gunakan fungsi penyimpanan token yang baru
+    const token = credential.accessToken;
+    setAccessToken(token); 
+    
+    return { user: result.user, accessToken: token };
   } catch (error: any) {
     console.error('Sign in error:', error);
     throw error;
@@ -60,29 +88,7 @@ export const googleSignIn = async (): Promise<{ user: User; accessToken: string 
   }
 };
 
-// Ganti logika variabel 'cachedAccessToken' lama Anda dengan ini:
-
-export const setAccessToken = (token: string) => {
-  // Simpan token ke memori sesi browser agar tahan banting saat refresh
-  sessionStorage.setItem('google_access_token', token);
-};
-// Ganti logika variabel 'cachedAccessToken' lama Anda dengan ini:
-
-export const setAccessToken = (token: string) => {
-  // Simpan token ke memori sesi browser agar tahan banting saat refresh
-  sessionStorage.setItem('google_access_token', token);
-};
-
-export const getAccessToken = (): string | null => {
-  return sessionStorage.getItem('google_access_token');
-};
-
-export const clearAccessToken = () => {
-  // Hapus token saat pengguna logout
-  sessionStorage.removeItem('google_access_token');
-};
-
 export const logout = async () => {
   await auth.signOut();
-  cachedAccessToken = null;
+  clearAccessToken(); // Bersihkan token saat logout
 };
