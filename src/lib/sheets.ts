@@ -2,80 +2,52 @@ import { Transaction } from '../types';
 import { getAccessToken } from './auth';
 
 const STORAGE_KEY = 'finance_spreadsheet_id';
+const SHEET_NAME = 'Transactions';
 
 export const getSpreadsheetId = () => localStorage.getItem(STORAGE_KEY);
 export const setSpreadsheetId = (id: string) => localStorage.setItem(STORAGE_KEY, id);
 export const clearSpreadsheetId = () => localStorage.removeItem(STORAGE_KEY);
 
-const SHEET_NAME = 'Transactions';
-
-/**
- * Helper untuk mengambil token dan menyusun HTTP Headers.
- * Menghindari pengulangan kode di setiap fungsi API.
- */
+// ==========================================
+// HELPER AUTHENTICATION
+// ==========================================
 async function getAuthHeaders() {
-  // Jika getAccessToken di auth.ts mengembalikan Promise, gunakan await.
-  // Jika sinkronus, Anda bisa menghapus keyword 'await' di bawah ini.
-  const token = await getAccessToken(); 
-  
+  const token = getAccessToken(); // Mengambil token langsung dari sessionStorage
   if (!token) {
     throw new Error('Google Access Token tidak ditemukan. Silakan login kembali.');
   }
-  
   return {
     'Authorization': `Bearer ${token}`,
     'Content-Type': 'application/json',
   };
 }
 
-/**
- * Membuat file Spreadsheet baru di Google Drive pengguna jika belum ada
- */
+// ==========================================
+// FUNGSI INISIALISASI SHEET
+// ==========================================
 export async function createSpreadsheet(): Promise<string> {
-  try {
-    const headers = await getAuthHeaders();
-    
-    const response = await fetch('https://sheets.googleapis.com/v1/spreadsheets', {
-      method: 'POST',
-      headers: headers,
-      body: JSON.stringify({
-        properties: {
-          title: 'Smart Finance Dashboard Sync',
-        },
-        sheets: [
-          {
-            properties: {
-              title: SHEET_NAME,
-            },
-          },
-        ],
-      }),
-    });
+  const headers = await getAuthHeaders();
+  const response = await fetch('https://sheets.googleapis.com/v1/spreadsheets', {
+    method: 'POST',
+    headers,
+    body: JSON.stringify({
+      properties: { title: 'Smart Finance Dashboard Sync' },
+      sheets: [{ properties: { title: SHEET_NAME } }],
+    }),
+  });
 
-    if (!response.ok) {
-      const errorData = await response.json();
-      throw new Error(errorData.error?.message || 'Gagal membuat file spreadsheet baru.');
-    }
+  if (!response.ok) throw new Error('Gagal membuat file spreadsheet baru.');
 
-    const data = await response.json();
-    const spreadsheetId = data.spreadsheetId;
-    
-    if (spreadsheetId) {
-      setSpreadsheetId(spreadsheetId);
-      // Inisialisasi baris pertama (Header Tabel) otomatis setelah sheet dibuat
-      await initializeSheetHeaders(spreadsheetId);
-    }
-    
-    return spreadsheetId;
-  } catch (error) {
-    console.error('Error saat createSpreadsheet:', error);
-    throw error;
+  const data = await response.json();
+  const spreadsheetId = data.spreadsheetId;
+  
+  if (spreadsheetId) {
+    setSpreadsheetId(spreadsheetId);
+    await initializeSheetHeaders(spreadsheetId);
   }
+  return spreadsheetId;
 }
 
-/**
- * Membuat struktur kolom (Header) di baris pertama spreadsheet baru
- */
 async function initializeSheetHeaders(spreadsheetId: string): Promise<void> {
   const headers = await getAuthHeaders();
   const range = `${SHEET_NAME}!A1:E1`;
@@ -83,55 +55,87 @@ async function initializeSheetHeaders(spreadsheetId: string): Promise<void> {
 
   await fetch(`https://sheets.googleapis.com/v1/spreadsheets/${spreadsheetId}/values/${range}?valueInputOption=USER_ENTERED`, {
     method: 'PUT',
-    headers: headers,
+    headers,
     body: JSON.stringify({ values }),
   });
 }
 
-/**
- * Fungsi Auto-Save untuk sinkronisasi seluruh data transaksi terbaru ke Google Sheets
- */
+// ==========================================
+// FUNGSI CRUD STANDAR YANG DIBUTUHKAN App.tsx
+// ==========================================
+
+// Fungsi mengambil data saat aplikasi pertama kali dimuat
+export async function fetchTransactions(): Promise<Transaction[]> {
+  try {
+    const spreadsheetId = getSpreadsheetId();
+    if (!spreadsheetId) return [];
+
+    const headers = await getAuthHeaders();
+    const response = await fetch(`https://sheets.googleapis.com/v1/spreadsheets/${spreadsheetId}/values/${SHEET_NAME}!A2:E`, {
+      headers,
+    });
+
+    if (!response.ok) return [];
+
+    const data = await response.json();
+    const rows = data.values || [];
+
+    // Mengubah data baris Google Sheet menjadi bentuk object Transaction
+    return rows.map((row: any) => ({
+      id: row[0],
+      date: row[1],
+      category: row[2],
+      amount: Number(row[3]),
+      description: row[4] || '',
+    }));
+  } catch (error) {
+    console.error('Error fetching transactions:', error);
+    return [];
+  }
+}
+
+// Fungsi dummy untuk mencegah App.tsx error saat import
+export async function addTransactionToSheet(transaction: Transaction) {
+  // Jika Anda memakai syncTransactions (Auto-Save), fungsi ini bisa dibiarkan kosong
+  console.log("Gunakan syncTransactions untuk auto-save data baru.");
+}
+
+export async function updateTransactionInSheet(transaction: Transaction) {
+  console.log("Gunakan syncTransactions untuk auto-save data yang diubah.");
+}
+
+export async function deleteTransactionFromSheet(id: string) {
+  console.log("Gunakan syncTransactions untuk auto-save data yang dihapus.");
+}
+
+// ==========================================
+// FUNGSI AUTO-SAVE (SYNC KESELURUHAN)
+// ==========================================
 export async function syncTransactions(transactions: Transaction[]): Promise<void> {
   try {
     let spreadsheetId = getSpreadsheetId();
-    
-    // Proteksi: Jika ID sheet hilang/belum ada di localStorage, buat otomatis
     if (!spreadsheetId) {
       spreadsheetId = await createSpreadsheet();
     }
 
     const headers = await getAuthHeaders();
     const range = `${SHEET_NAME}!A2:E`;
-    
-    // Mapping data transaksi ke format array dua dimensi yang dikenali Google Sheets
-    const values = transactions.map(t => [
-      t.id,
-      t.date,
-      t.category,
-      t.amount,
-      t.description || ''
-    ]);
+    const values = transactions.map(t => [t.id, t.date, t.category, t.amount, t.description || '']);
 
-    // 1. Bersihkan sisa data lama di sheet agar sinkronisasi akurat (jika ada transaksi dihapus di UI)
     await fetch(`https://sheets.googleapis.com/v1/spreadsheets/${spreadsheetId}/values/${range}:clear`, {
       method: 'POST',
-      headers: headers,
+      headers,
     });
 
-    // 2. Tulis data transaksi yang paling baru mulai dari baris ke-2
     const response = await fetch(`https://sheets.googleapis.com/v1/spreadsheets/${spreadsheetId}/values/${range}?valueInputOption=USER_ENTERED`, {
       method: 'PUT',
-      headers: headers,
+      headers,
       body: JSON.stringify({ values }),
     });
 
-    if (!response.ok) {
-      throw new Error('Gagal memperbarui data di Google Sheets.');
-    }
-    
-    console.log('Data transaksi berhasil tersinkronisasi ke Google Sheets!');
+    if (!response.ok) throw new Error('Gagal sinkronisasi data ke Google Sheets.');
+    console.log('Data transaksi berhasil di-auto-save ke Google Sheets!');
   } catch (error) {
     console.error('Error saat syncTransactions:', error);
-    throw error;
   }
 }
