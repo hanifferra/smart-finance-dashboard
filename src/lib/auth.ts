@@ -60,8 +60,26 @@ export const googleSignIn = async (): Promise<{ user: User; accessToken: string 
   }
 };
 
-export const getAccessToken = async (): Promise<string | null> => {
-  return cachedAccessToken;
+// Ganti logika variabel 'cachedAccessToken' lama Anda dengan ini:
+
+export const setAccessToken = (token: string) => {
+  // Simpan token ke memori sesi browser agar tahan banting saat refresh
+  sessionStorage.setItem('google_access_token', token);
+};
+// Ganti logika variabel 'cachedAccessToken' lama Anda dengan ini:
+
+export const setAccessToken = (token: string) => {
+  // Simpan token ke memori sesi browser agar tahan banting saat refresh
+  sessionStorage.setItem('google_access_token', token);
+};
+
+export const getAccessToken = (): string | null => {
+  return sessionStorage.getItem('google_access_token');
+};
+
+export const clearAccessToken = () => {
+  // Hapus token saat pengguna logout
+  sessionStorage.removeItem('google_access_token');
 };
 
 export const logout = async () => {

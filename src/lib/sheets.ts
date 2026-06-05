@@ -9,142 +9,129 @@ export const clearSpreadsheetId = () => localStorage.removeItem(STORAGE_KEY);
 
 const SHEET_NAME = 'Transactions';
 
+/**
+ * Helper untuk mengambil token dan menyusun HTTP Headers.
+ * Menghindari pengulangan kode di setiap fungsi API.
+ */
+async function getAuthHeaders() {
+  // Jika getAccessToken di auth.ts mengembalikan Promise, gunakan await.
+  // Jika sinkronus, Anda bisa menghapus keyword 'await' di bawah ini.
+  const token = await getAccessToken(); 
+  
+  if (!token) {
+    throw new Error('Google Access Token tidak ditemukan. Silakan login kembali.');
+  }
+  
+  return {
+    'Authorization': `Bearer ${token}`,
+    'Content-Type': 'application/json',
+  };
+}
+
+/**
+ * Membuat file Spreadsheet baru di Google Drive pengguna jika belum ada
+ */
 export async function createSpreadsheet(): Promise<string> {
-  const token = await getAccessToken();
-  if (!token) throw new Error('Not authenticated');
-
-  const res = await fetch('https://sheets.googleapis.com/v4/spreadsheets', {
-    method: 'POST',
-    headers: {
-      Authorization: `Bearer ${token}`,
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify({
-      properties: {
-        title: 'Smart Finance Data',
-      },
-      sheets: [
-        {
-          properties: {
-            title: SHEET_NAME,
-          },
+  try {
+    const headers = await getAuthHeaders();
+    
+    const response = await fetch('https://sheets.googleapis.com/v1/spreadsheets', {
+      method: 'POST',
+      headers: headers,
+      body: JSON.stringify({
+        properties: {
+          title: 'Smart Finance Dashboard Sync',
         },
-      ],
-    }),
-  });
+        sheets: [
+          {
+            properties: {
+              title: SHEET_NAME,
+            },
+          },
+        ],
+      }),
+    });
 
-  if (!res.ok) {
-    throw new Error('Failed to create spreadsheet');
-  }
-
-  const data = await res.json();
-  const id = data.spreadsheetId;
-  setSpreadsheetId(id);
-  
-  // Set up headers
-  await appendRow(id, ['ID', 'Type', 'Amount', 'Category', 'Description', 'Date']);
-  
-  return id;
-}
-
-export async function fetchTransactions(spreadsheetId: string): Promise<Transaction[]> {
-  const token = await getAccessToken();
-  if (!token) throw new Error('Not authenticated');
-
-  const res = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/${SHEET_NAME}!A2:F`, {
-    headers: { Authorization: `Bearer ${token}` },
-  });
-
-  if (!res.ok) {
-    if (res.status === 404) {
-        throw new Error('Spreadsheet not found');
+    if (!response.ok) {
+      const errorData = await response.json();
+      throw new Error(errorData.error?.message || 'Gagal membuat file spreadsheet baru.');
     }
-    throw new Error('Failed to fetch transactions');
-  }
 
-  const data = await res.json();
-  const rows = data.values || [];
-
-  return rows.map((row: any[]) => ({
-    id: row[0],
-    type: row[1] as 'income' | 'expense',
-    amount: Number(row[2]),
-    category: row[3] as any,
-    description: row[4],
-    date: row[5],
-  })).sort((a: Transaction, b: Transaction) => new Date(b.date).getTime() - new Date(a.date).getTime());
-}
-
-export async function appendRow(spreadsheetId: string, values: any[]) {
-  const token = await getAccessToken();
-  if (!token) throw new Error('Not authenticated');
-
-  const res = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/${SHEET_NAME}!A:F:append?valueInputOption=USER_ENTERED`, {
-    method: 'POST',
-    headers: {
-      Authorization: `Bearer ${token}`,
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify({
-      values: [values],
-    }),
-  });
-
-  if (!res.ok) {
-    throw new Error('Failed to append row');
+    const data = await response.json();
+    const spreadsheetId = data.spreadsheetId;
+    
+    if (spreadsheetId) {
+      setSpreadsheetId(spreadsheetId);
+      // Inisialisasi baris pertama (Header Tabel) otomatis setelah sheet dibuat
+      await initializeSheetHeaders(spreadsheetId);
+    }
+    
+    return spreadsheetId;
+  } catch (error) {
+    console.error('Error saat createSpreadsheet:', error);
+    throw error;
   }
 }
 
-export async function addTransactionToSheet(spreadsheetId: string, transaction: Transaction) {
-  await appendRow(spreadsheetId, [
-    transaction.id,
-    transaction.type,
-    transaction.amount,
-    transaction.category,
-    transaction.description,
-    transaction.date,
-  ]);
-}
+/**
+ * Membuat struktur kolom (Header) di baris pertama spreadsheet baru
+ */
+async function initializeSheetHeaders(spreadsheetId: string): Promise<void> {
+  const headers = await getAuthHeaders();
+  const range = `${SHEET_NAME}!A1:E1`;
+  const values = [['ID Transaksi', 'Tanggal', 'Kategori', 'Jumlah', 'Keterangan']];
 
-export async function updateTransactionInSheet(spreadsheetId: string, transaction: Transaction) {
-  const token = await getAccessToken();
-  if (!token) throw new Error('Not authenticated');
-
-  const res = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/${SHEET_NAME}!A:A`, {
-    headers: { Authorization: `Bearer ${token}` },
-  });
-
-  if (!res.ok) throw new Error('Failed to fetch for update');
-  
-  const data = await res.json();
-  const rows = data.values || [];
-  
-  const rowIndex = rows.findIndex((r: any[]) => r[0] === transaction.id);
-  if (rowIndex === -1) throw new Error('Transaction not found in sheet');
-
-  const rowNumber = rowIndex + 1; // 1-based index
-
-  const updateRes = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/${SHEET_NAME}!A${rowNumber}:F${rowNumber}?valueInputOption=USER_ENTERED`, {
+  await fetch(`https://sheets.googleapis.com/v1/spreadsheets/${spreadsheetId}/values/${range}?valueInputOption=USER_ENTERED`, {
     method: 'PUT',
-    headers: {
-      Authorization: `Bearer ${token}`,
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify({
-      values: [[
-        transaction.id,
-        transaction.type,
-        transaction.amount,
-        transaction.category,
-        transaction.description,
-        transaction.date,
-      ]],
-    }),
+    headers: headers,
+    body: JSON.stringify({ values }),
   });
-
-  if (!updateRes.ok) {
-    throw new Error('Failed to update row');
-  }
 }
 
+/**
+ * Fungsi Auto-Save untuk sinkronisasi seluruh data transaksi terbaru ke Google Sheets
+ */
+export async function syncTransactions(transactions: Transaction[]): Promise<void> {
+  try {
+    let spreadsheetId = getSpreadsheetId();
+    
+    // Proteksi: Jika ID sheet hilang/belum ada di localStorage, buat otomatis
+    if (!spreadsheetId) {
+      spreadsheetId = await createSpreadsheet();
+    }
 
+    const headers = await getAuthHeaders();
+    const range = `${SHEET_NAME}!A2:E`;
+    
+    // Mapping data transaksi ke format array dua dimensi yang dikenali Google Sheets
+    const values = transactions.map(t => [
+      t.id,
+      t.date,
+      t.category,
+      t.amount,
+      t.description || ''
+    ]);
+
+    // 1. Bersihkan sisa data lama di sheet agar sinkronisasi akurat (jika ada transaksi dihapus di UI)
+    await fetch(`https://sheets.googleapis.com/v1/spreadsheets/${spreadsheetId}/values/${range}:clear`, {
+      method: 'POST',
+      headers: headers,
+    });
+
+    // 2. Tulis data transaksi yang paling baru mulai dari baris ke-2
+    const response = await fetch(`https://sheets.googleapis.com/v1/spreadsheets/${spreadsheetId}/values/${range}?valueInputOption=USER_ENTERED`, {
+      method: 'PUT',
+      headers: headers,
+      body: JSON.stringify({ values }),
+    });
+
+    if (!response.ok) {
+      throw new Error('Gagal memperbarui data di Google Sheets.');
+    }
+    
+    console.log('Data transaksi berhasil tersinkronisasi ke Google Sheets!');
+  } catch (error) {
+    console.error('Error saat syncTransactions:', error);
+    throw error;
+  }
+}

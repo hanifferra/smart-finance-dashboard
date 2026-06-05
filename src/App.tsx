@@ -101,6 +101,7 @@ export default function App() {
       }
     } catch (err) {
       console.error('Failed to sync to sheets:', err);
+      alert("Gagal menyimpan ke Google Sheets! Pastikan Sheets API sudah aktif.");
     }
   };
 
